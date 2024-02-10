@@ -40,8 +40,10 @@ float rangeScale = 0.0f;
 float domainScale = 1.0f;
 float domYScale = 1.0f;
 
-int gridsize = 30;
-int branchCount = 5;
+int gridsize = 50;
+int branchCount = 1;
+
+float magThresh = 100.0f; // for continuity checks
 
 
 void setup()
@@ -56,6 +58,7 @@ void setup()
 
 void DisplayText()
 {
+  text("domain scale : " + str(domainScale), 5, 40);
   text("range scale : " + str(rangeScale), 5, 20);
 }
 
@@ -104,22 +107,22 @@ void drawAxes()
   stroke(xColor);
   fill  (xColor);
   line(originScreenSpace.x, originScreenSpace.y, xScreenSpace.x, xScreenSpace.y);
-  text("Re(z)", xScreenSpace.x, xScreenSpace.y);
+  if (domainScale > 0) text("Re(z)", xScreenSpace.x, xScreenSpace.y);
 
   stroke(yColor);
   fill  (yColor);
   line(originScreenSpace.x, originScreenSpace.y, yScreenSpace.x, yScreenSpace.y);
-  text("Im(z)", yScreenSpace.x, yScreenSpace.y);
+  if (domainScale > 0) text("Im(z)", yScreenSpace.x, yScreenSpace.y);
 
   stroke(zColor);
   fill  (zColor);
   line(originScreenSpace.x, originScreenSpace.y, zScreenSpace.x, zScreenSpace.y);
-  if(rangeScale > 0) text("Re(f(z))", zScreenSpace.x, zScreenSpace.y);
+  if (rangeScale > 0) text("Re(f(z))", zScreenSpace.x, zScreenSpace.y);
 
   stroke(wColor);
   fill  (wColor);
   line(originScreenSpace.x, originScreenSpace.y, wScreenSpace.x, wScreenSpace.y);
-  if(rangeScale > 0) text("Im(f(z))", wScreenSpace.x, wScreenSpace.y);
+  if (rangeScale > 0) text("Im(f(z))", wScreenSpace.x, wScreenSpace.y);
 
   stroke(255);
   fill(255);
@@ -142,7 +145,13 @@ void keyPressed()
   if (key == '[' )
     domYScale -= 0.025;
 
+  if (key == '0')
+    domainScale += 0.025;
+  if (key == '9' )
+    domainScale -= 0.025;
+
   rangeScale = max(rangeScale, 0);
+  domainScale = max(domainScale, 0);
   //rangeScale = min(1,rangeScale);
   //domainScale = 1 - rangeScale;
 }
@@ -178,7 +187,10 @@ PVector cmult(PVector a, PVector b)
 {
   return new PVector(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x);
 }
-
+PVector cadd(PVector a, PVector b)
+{
+  return new PVector(a.x + b.x, a.y + b.y);
+}
 
 PVector complexFunc(float x, float y, float branch )
 {
@@ -192,14 +204,27 @@ PVector complexFunc(float x, float y, float branch )
   //return complexPosPrinciple(z, 0.5, branch);
 
   // actual homework function:
-  return complexPosPrinciple(complexPosPrinciple(z, 2, 0).add(new PVector(1, 0)), 1.0/2.0, branch); // return id
-
-
+  //return complexPosPrinciple(complexPosPrinciple(z, 2, 0).add(new PVector(1, 0)), 1.0/2.0, branch); // return id
 
   //PVector z2p1 = cmult(z,z).add(new PVector(1,0));
 
-  //return clog(z, branch);
+if(true)
+  return cexp(new PVector(e,0), z, branch);
   //return cexp(new PVector(e,0), new PVector(0.5 * log(z2p1.mag()), 0.5 * z2p1.heading()), branch);
+  //return cexp(z, new PVector(-0.5,0.0), branch);
+
+
+  // mobius transformation:
+
+  PVector a = new PVector(1, 0);
+  PVector b = new PVector(0, -1);
+  PVector c = new PVector(1, 0);
+  PVector d = new PVector(0, 1);
+
+  PVector num = cadd(cmult(a, z), b);
+  PVector den = cadd(cmult(c, z), d);
+
+  return cmult(num, cexp(den, new PVector(-1, 0), branch));
 }
 
 
@@ -207,19 +232,68 @@ vec4 surfaceParam(float s, float t, float branch)
 {
 
   PVector output = complexFunc(s, t, branch);
-
-
   return new vec4(s, t, output.x, output.y);
   //return new vec4(cos(s), sin(s), cos(t), sin(t));
 }
 
+PVector invStereoToScreen(PVector z, float a, float b, float c, float d)
+{
+  float X = z.x;
+  float Y = z.y;
+  float X2 = X * X;
+  float Y2 = Y * Y;
+  float DEN = (1 + X2 + Y2);
 
+  PVector rangeStereoSphereCoords = new PVector(
+    2.0f * X / DEN,
+    2.0f * Y / DEN,
+    (DEN - 2.0f) / DEN
+    );
+
+  PVector rangeScreenSpace = new PVector(
+    rangeStereoSphereCoords.x * cos(c) -  rangeStereoSphereCoords.y * sin(c),
+    rangeStereoSphereCoords.x * sin(c) +  rangeStereoSphereCoords.y * cos(c) - 1.0 * rangeStereoSphereCoords.z
+    );
+
+  return rangeScreenSpace;
+}
 
 PVector proj42(vec4 world, float a, float b, float c, float d)
 {
-  PVector screen = new PVector(
-    cos(a) * world.x * domainScale - cos(b) * world.y * domainScale * domYScale + cos(c) * world.z * rangeScale - cos(d) * world.w * rangeScale,
-    sin(a) * world.x * domainScale - sin(b) * world.y * domainScale * domYScale + sin(c) * world.z * rangeScale - sin(d) * world.w * rangeScale);
+  PVector domainScreenSpace = new PVector(
+    cos(a) * world.x * domainScale - cos(b) * world.y * domainScale * domYScale,
+    sin(a) * world.x * domainScale - sin(b) * world.y * domainScale * domYScale
+    );
+
+  /*
+  PVector rangeScreenSpace = new PVector(
+   cos(c) * world.z * rangeScale - cos(d) * world.w * rangeScale,
+   sin(c) * world.z * rangeScale - sin(d) * world.w * rangeScale
+   );
+   
+
+  float X = world.z;
+  float Y = world.w;
+  float X2 = X * X;
+  float Y2 = Y * Y;
+  float DEN = (1 + X2 + Y2);
+
+  PVector rangeStereoSphereCoords = new PVector(
+    2.0f * X / DEN,
+    2.0f * Y / DEN,
+    (DEN - 2.0f) / DEN
+    );
+
+  PVector rangeScreenSpace = new PVector(
+    rangeStereoSphereCoords.x * cos(c) -  rangeStereoSphereCoords.y * sin(c),
+    rangeStereoSphereCoords.x * sin(c) +  rangeStereoSphereCoords.y * cos(c) - 1.0 * rangeStereoSphereCoords.z
+    );
+    */
+
+  PVector rangeScreenSpace = PVector.mult(invStereoToScreen(new PVector(world.z, world.w), a,b,c,d), rangeScale);
+ // domainScreenSpace = PVector.mult(invStereoToScreen(new PVector(world.x, world.y), c,d,b,a), domainScale);
+
+  PVector screen = PVector.add(domainScreenSpace, rangeScreenSpace);
 
   screen = PVector.mult(screen, height / 12);
   return PVector.add(screen, new PVector(height/2, height/2));
@@ -265,7 +339,6 @@ void drawDomainColouring()
 void drawComplexGraph(float branch )
 {
   strokeWeight(1);
-  float magThresh = 0.5f; // for continuity checks
 
   vec4[][] points = new vec4[gridsize][gridsize];
 
@@ -283,6 +356,7 @@ void drawComplexGraph(float branch )
   for (int x = 0; x < gridsize - 1; x++)
     for (int y = 0; y < gridsize - 1; y++)
     {
+
       PVector[] coords = new PVector[4];
       coords[0] = proj42(points[x][y], angleA, angleB, angleC, angleD);
       coords[1] = proj42(points[x + 1][y], angleA, angleB, angleC, angleD);
@@ -293,12 +367,28 @@ void drawComplexGraph(float branch )
 
       PVector image = new PVector(points[x][y].z, points[x][y].w);
       colorMode(HSB, 1, 1, 1);
+
       stroke(color(image.heading()/ (2 * pi) + 0.5, 0.5, image.mag()));
+      strokeWeight(1);
 
-
+      if (y == gridsize/2)
+      {
+        strokeWeight(2);
+        stroke(1, 0, 1);
+      }
       // continuity checks
       if (new PVector(points[x][y].z - points[x + 1][y].z, points[x][y].w - points[x + 1][y].w).mag() < magThresh)
         line(coords[0].x, coords[0].y, coords[1].x, coords[1].y);
+
+      stroke(color(image.heading()/ (2 * pi) + 0.5, 0.5, image.mag()));
+      strokeWeight(1);
+
+      if (x == gridsize/2)
+      {
+        strokeWeight(2);
+        stroke(1, 0, 1);
+      }
+
       if (new PVector(points[x][y].z - points[x][y + 1].z, points[x][y].w - points[x][y + 1].w).mag() < magThresh)
         line(coords[0].x, coords[0].y, coords[2].x, coords[2].y);
 
@@ -340,7 +430,7 @@ void drawComplexGraph(float branch )
   // domain plane:
   stroke(0, 0, 1, 0.25);
   strokeWeight(1);
-  
+
   float planeGridSize = 10;
 
   for (int x = 0; x < planeGridSize; x++)
@@ -388,7 +478,6 @@ void drawComplexGraph(float branch )
 
       //line(coords[0].x, coords[0].y, coords[1].x, coords[1].y);
     }
-   
 }
 
 void drawQuadrentMarkers()
